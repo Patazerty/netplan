@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -21,6 +22,7 @@
 
 static gint _try_child_stdin = -1;
 static GPid _try_child_pid = -1;
+static guint _try_child_timeout = 0;
 
 static int method_apply(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
     g_autoptr(GError) err = NULL;
@@ -93,18 +95,57 @@ static int method_info(sd_bus_message *m, void *userdata, sd_bus_error *ret_erro
     return sd_bus_send(NULL, reply, NULL);
 }
 
+//XXX: choose more telling function name, like _netplan_try_child_still alive?
+static int
+check_netplan_try_child(sd_bus_message *m, sd_bus_error *ret_error)
+{
+    int status = -1;
+    int r = -1;
+    //guint now = (guint) time(NULL);
+    if (_try_child_pid < 0)
+        return sd_bus_error_setf(ret_error, SD_BUS_ERROR_FAILED, "Invalid netplan try PID");
+
+    r = (int)waitpid(_try_child_pid, &status, WNOHANG)
+    if (r > 0 && status == 0) {
+        /* The child already exited. Cannot send signal. Cleanup. */
+        _try_child_stdin = -1;
+        _try_child_pid = -1;
+        _try_child_timeout = 0;
+        return sd_bus_reply_method_return(m, "b", false);
+    }
+    //TODO: handle error cases
+#ifdef 0
+    if (now >= _try_child_timeout) {
+        /* Time is up. Cancel 'netplan try' child process (if still running) */
+        kill(_try_child_pid, SIGINT);
+        g_spawn_close_pid (_try_child_pid);
+        /* cleanup */
+        _try_child_stdin = -1;
+        _try_child_pid = -1;
+        _try_child_timeout = 0;
+        return sd_bus_reply_method_return(m, "b", false);
+    }
+#endif
+
+    return 0;
+}
+
 static int method_try(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
     g_autoptr(GError) err = NULL;
     g_autofree gchar *timeout = NULL;
     guint seconds = 0;
 
-    sd_bus_message_read_basic (m, 'u', &seconds);
+    if (_try_child_timeout > 0 || _try_child_pid > 0)
+        return sd_bus_error_setf(ret_error, SD_BUS_ERROR_FAILED, "cannot run netplan try: already running");
+
+    if (sd_bus_message_read_basic (m, 'u', &seconds) < 0)
+        return sd_bus_error_setf(ret_error, SD_BUS_ERROR_FAILED, "cannot extract timeout_seconds");
     if (seconds > 0)
         timeout = g_strdup_printf("--timeout=%u", seconds);
     gchar *argv[] = {SBINDIR "/" "netplan", "try", timeout, NULL};
 
     // for tests only: allow changing what netplan to run
-    if (getuid() != 0 && getenv("DBUS_TEST_NETPLAN_CMD") != 0)
+    //if (getuid() != 0 && getenv("DBUS_TEST_NETPLAN_CMD") != 0)
        argv[0] = getenv("DBUS_TEST_NETPLAN_CMD");
 
     // TODO: stdout & stderr to /dev/null flags
@@ -112,7 +153,9 @@ static int method_try(sd_bus_message *m, void *userdata, sd_bus_error *ret_error
     if (err != NULL)
         return sd_bus_error_setf(ret_error, SD_BUS_ERROR_FAILED, "cannot run netplan try: %s", err->message);
 
-    // TODO: possibly return child PID
+    _try_child_timeout = (guint)time(NULL) + seconds;
+    // TODO: set a timer (via event-loop) to send a Changed() signal via DBus and cancel the try command
+
     return sd_bus_reply_method_return(m, "b", true);
 }
 
@@ -120,15 +163,18 @@ static int method_try_cancel(sd_bus_message *m, void *userdata, sd_bus_error *re
     GError *error = NULL;
     GIOChannel *stdin = NULL;
     int status = -1;
+    int r = check_netplan_try_child(m, ret_error);
 
-    // TODO: consume child_pid and child_stdin as args instead of global var
-    if (_try_child_pid < 0 || waitpid (_try_child_pid, &status, WNOHANG) < 0) {
-        /* Child does not exist or already exited ... */
+    if (r != 0)
+        return r;
+
+    /* Child does not exist or already exited ... */
+    // XXX: isn't this checked in check_netplan_try_child() already?
+    if (_try_child_pid < 0 || waitpid (_try_child_pid, &status, WNOHANG) < 0)
         return sd_bus_reply_method_return(m, "b", false);
-    }
 
+    /* Send cancel signal to 'netplan try' process */
     kill(_try_child_pid, SIGINT);
-
     waitpid (_try_child_pid, &status, 0);
     g_spawn_check_exit_status(status, &error);
     if (error != NULL)
@@ -138,22 +184,28 @@ static int method_try_cancel(sd_bus_message *m, void *userdata, sd_bus_error *re
     printf("Child exited with status code %d\n", WEXITSTATUS(status));
 
     g_spawn_close_pid (_try_child_pid);
+    _try_child_stdin = -1;
+    _try_child_pid = -1;
+    _try_child_timeout = 0;
 
     return sd_bus_reply_method_return(m, "b", true);
 }
 
 static int method_try_confirm(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
+    // TODO: move this into Apply()
     GError *error = NULL;
     int status = -1;
+    int r = check_netplan_try_child(m, ret_error);
 
-    // TODO: consume child_pid and child_stdin as args instead of global var
+    if (r != 0)
+        return r;
+
     if (_try_child_pid < 0 || waitpid (_try_child_pid, &status, WNOHANG) < 0) {
         /* Child does not exist or already exited ... */
         return sd_bus_reply_method_return(m, "b", false);
     }
 
     kill(_try_child_pid, SIGUSR1);
-
     waitpid(_try_child_pid, &status, 0);
     g_spawn_check_exit_status(status, &error);
     if (error != NULL)
@@ -204,7 +256,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to acquire service name: %s\n", strerror(-r));
         goto finish;
     }
-
     for (;;) {
         r = sd_bus_process(bus, NULL);
         if (r < 0) {
