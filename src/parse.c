@@ -1350,6 +1350,7 @@ handle_routes_type(yaml_document_t* doc, yaml_node_t* node, const void* data, GE
     cur_route->type = g_strdup(scalar(node));
 
     if (g_ascii_strcasecmp(cur_route->type, "unicast") == 0 ||
+        g_ascii_strcasecmp(cur_route->type, "multicast") == 0 ||
         g_ascii_strcasecmp(cur_route->type, "unreachable") == 0 ||
         g_ascii_strcasecmp(cur_route->type, "blackhole") == 0 ||
         g_ascii_strcasecmp(cur_route->type, "prohibit") == 0)
@@ -1574,6 +1575,9 @@ handle_routes(yaml_document_t* doc, yaml_node_t* node, const void* _, GError** e
         } else if (g_ascii_strcasecmp(cur_route->type, "unicast") != 0 && !cur_route->to) {
             cur_route = NULL;
             return yaml_error(node, error, "non-unicast routes must specify a 'to' IP");
+        } else if (g_ascii_strcasecmp(cur_route->type, "multicast") == 0 && !cur_route->to) {
+            cur_route = NULL;
+            return yaml_error(node, error, "multicast routes must specify a 'to' IP");
         }
 
         cur_route = NULL;
