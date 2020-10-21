@@ -597,6 +597,13 @@ write_network_file(const NetplanNetDefinition* def, const char* rootdir, const c
         g_string_append(network, "LinkLocalAddressing=no\n");
     }
 
+    if (def->llmnr == NETPLAN_LLMNR_ENABLE)
+        g_string_append(network, "LLMNR=true\n");
+    else if (def->llmnr == NETPLAN_LLMNR_DISABLE)
+        g_string_append(network, "LLMNR=false\n");
+    else if (def->llmnr == NETPLAN_LLMNR_RESOLVE)
+        g_string_append(network, "LLMNR=resolve\n");
+
     if (def->ip4_addresses)
         for (unsigned i = 0; i < def->ip4_addresses->len; ++i)
             g_string_append_printf(network, "Address=%s\n", g_array_index(def->ip4_addresses, char*, i));

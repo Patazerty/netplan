@@ -170,6 +170,14 @@ typedef enum {
     NETPLAN_AUTH_EAP_TTLS,
 } NetplanAuthEAPMethod;
 
+typedef enum {
+    NETPLAN_LLMNR_ENABLE = TRUE,
+    NETPLAN_LLMNR_DISABLE = FALSE,
+    NETPLAN_LLMNR_DEFAULT = 2,
+    NETPLAN_LLMNR_RESOLVE = 3,
+} NetPlanLLMNR;
+
+
 typedef struct missing_node {
     char* netdef_id;
     const yaml_node_t* node;
@@ -284,6 +292,9 @@ struct net_definition {
     /* ipv6 mtu */
     /* netplan-feature: ipv6-mtu */
     guint ipv6_mtubytes;
+
+    /* Link-Local Multicast Name Resolution */
+     NetPlanLLMNR llmnr;
 
     /* these properties are only valid for physical interfaces (type < ND_VIRTUAL) */
     char* set_name;

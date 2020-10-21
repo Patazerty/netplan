@@ -228,6 +228,7 @@ netplan_netdef_new(const char* id, NetplanDefType type, NetplanBackend backend)
     cur_netdef->linklocal.ipv6 = TRUE;
     cur_netdef->sriov_vlan_filter = FALSE;
     cur_netdef->sriov_explicit_vf_count = G_MAXUINT; /* 0 is a valid number of VFs */
+    cur_netdef->llmnr = NETPLAN_LLMNR_DEFAULT;
 
     /* DHCP override defaults */
     initialize_dhcp_overrides(&cur_netdef->dhcp4_overrides);
@@ -618,6 +619,17 @@ handle_netdef_map(yaml_document_t* doc, yaml_node_t* node, const void* data, GEr
 {
     g_assert(cur_netdef);
     return handle_generic_map(doc, node, cur_netdef, data, error);
+}
+
+static gboolean
+handle_netdef_llmnr(yaml_document_t* doc, yaml_node_t* node, const void* data, GError** error)
+{
+    g_assert(cur_netdef);
+    if (strcmp(scalar(node), "resolve") == 0)
+        cur_netdef->llmnr = NETPLAN_LLMNR_RESOLVE;
+    else
+        return handle_generic_bool(doc, node, cur_netdef, data, error);
+    return TRUE;
 }
 
 /****************************************************
@@ -2155,6 +2167,7 @@ static const mapping_entry_handler dhcp6_overrides_handlers[] = {
     {"ipv6-mtu", YAML_SCALAR_NODE, handle_netdef_guint, NULL, netdef_offset(ipv6_mtubytes)},  \
     {"ipv6-privacy", YAML_SCALAR_NODE, handle_netdef_bool, NULL, netdef_offset(ip6_privacy)}, \
     {"link-local", YAML_SEQUENCE_NODE, handle_link_local},                                    \
+    {"llmnr", YAML_SCALAR_NODE, handle_netdef_llmnr, NULL, netdef_offset(llmnr)},              \
     {"macaddress", YAML_SCALAR_NODE, handle_netdef_mac, NULL, netdef_offset(set_mac)},        \
     {"mtu", YAML_SCALAR_NODE, handle_netdef_guint, NULL, netdef_offset(mtubytes)},            \
     {"nameservers", YAML_MAPPING_NODE, NULL, nameservers_handlers},                           \
